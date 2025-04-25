@@ -1,4 +1,3 @@
-# M4F
-Cortex M4 Emulator
+# Cortex M4 Emulator
 
 NOT READY !
