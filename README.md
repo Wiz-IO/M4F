@@ -1,3 +1,3 @@
 # Cortex M4 Emulator
 
-NOT READY !
+NOT READY ! Има Грешки....
