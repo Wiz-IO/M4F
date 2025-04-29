@@ -6,64 +6,12 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <string.h>
-
-#define ROM_BASE 0x00000000
-#define RAM_BASE 0x20000000
+#include "PIC.h"
 
 #define USE_FPU 0
 #define USE_DSP 0
 #define USE_NVIC 0
 #define USE_SYSTEM 0
-
-#ifdef DISABLE_DEBUG
-#define M4_DEBUG(FORMAT, ...) ((void)0) // Няма код
-#else
-#define M4_DEBUG(FORMAT, ...) M4_DEBUG(FORMAT, __VA_ARGS__)
-#endif
-
-
-/* --- 8-bit (1 bytes) --- */
-#define READ_ROM_8(ADDR) (CPU.ROM[(ADDR) - ROM_BASE])
-#define READ_RAM_8(ADDR) (CPU.RAM[(ADDR) - RAM_BASE])
-#define WRITE_RAM_8(ADDR, DATA) (CPU.RAM[(ADDR) - RAM_BASE] = (DATA))
-
-/* --- 16-bit (2 bytes) --- */
-#define READ_ROM_16(ADDR)                   \
-    ((uint16_t)CPU.ROM[(ADDR) - ROM_BASE] | \
-     (uint16_t)(CPU.ROM[(ADDR) - ROM_BASE + 1] << 8))
-
-#define READ_RAM_16(ADDR)                   \
-    ((uint16_t)CPU.RAM[(ADDR) - RAM_BASE] | \
-     (uint16_t)(CPU.RAM[(ADDR) - RAM_BASE + 1] << 8))
-
-#define WRITE_RAM_16(ADDR, DATA)                                          \
-    do                                                                    \
-    {                                                                     \
-        CPU.RAM[(ADDR) - RAM_BASE] = (uint8_t)((DATA) & 0xFF);            \
-        CPU.RAM[(ADDR) - RAM_BASE + 1] = (uint8_t)(((DATA) >> 8) & 0xFF); \
-    } while (0)
-
-/* --- 32-bit (4 bytes) --- */
-#define READ_ROM_32(ADDR)                               \
-    ((uint32_t)CPU.ROM[(ADDR) - ROM_BASE] |             \
-     (uint32_t)(CPU.ROM[(ADDR) - ROM_BASE + 1] << 8) |  \
-     (uint32_t)(CPU.ROM[(ADDR) - ROM_BASE + 2] << 16) | \
-     (uint32_t)(CPU.ROM[(ADDR) - ROM_BASE + 3] << 24))
-
-#define READ_RAM_32(ADDR)                               \
-    ((uint32_t)CPU.RAM[(ADDR) - RAM_BASE] |             \
-     (uint32_t)(CPU.RAM[(ADDR) - RAM_BASE + 1] << 8) |  \
-     (uint32_t)(CPU.RAM[(ADDR) - RAM_BASE + 2] << 16) | \
-     (uint32_t)(CPU.RAM[(ADDR) - RAM_BASE + 3] << 24))
-
-#define WRITE_RAM_32(ADDR, DATA)                                           \
-    do                                                                     \
-    {                                                                      \
-        CPU.RAM[(ADDR) - RAM_BASE] = (uint8_t)((DATA) & 0xFF);             \
-        CPU.RAM[(ADDR) - RAM_BASE + 1] = (uint8_t)(((DATA) >> 8) & 0xFF);  \
-        CPU.RAM[(ADDR) - RAM_BASE + 2] = (uint8_t)(((DATA) >> 16) & 0xFF); \
-        CPU.RAM[(ADDR) - RAM_BASE + 3] = (uint8_t)(((DATA) >> 24) & 0xFF); \
-    } while (0)
 
 typedef union M4_u
 {
@@ -187,12 +135,13 @@ typedef struct
     uint32_t *vector_table;
     uint32_t vector_table_size;
 #endif
+    uint8_t ITSTATE;
     uint32_t op;
     int error;
 #if 1
     FILE *file;
 #endif
-    const uint8_t *ROM;
+    uint8_t *ROM;
     uint32_t ROM_SIZE;
     uint8_t *RAM;
     uint32_t RAM_SIZE;
@@ -236,6 +185,19 @@ typedef enum
     OP_SADD16,
     OP_UADD16
 } OP_TYPE;
+
+#define RETURN_ERROR(E) return ((CPU.error = E))
+
+void PRINT_REG(void);
+
+uint32_t READ_THUMB_32(uint32_t address, int *result);
+uint32_t READ_MEM_32(uint32_t address, int *result);
+uint16_t READ_MEM_16(uint32_t address, int *result);
+uint8_t READ_MEM_8(uint32_t address, int *result);
+
+int WRITE_MEM_32(uint32_t address, uint32_t data);
+int WRITE_MEM_16(uint32_t address, uint16_t data);
+int WRITE_MEM_8(uint32_t address, uint8_t data);
 
 void m4_update_apsr(uint32_t result, uint32_t op1, uint32_t op2, int operation_type, int shift_amount, int update_flags);
 int m4_execute_16(void);

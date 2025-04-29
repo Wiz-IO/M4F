@@ -1,258 +1,263 @@
 #include "M4.h"
+#include "common.h"
 
-// Глобална CPU структура
 CortexM4 CPU;
 
-// Помощна функция за изчисляване на Overflow (V) за ADD и CMN
-static int compute_overflow_add(int32_t s_op1, int32_t s_op2, int32_t s_result)
-{
-    return ((s_op1 > 0 && s_op2 > 0 && s_result < 0) || (s_op1 < 0 && s_op2 < 0 && s_result > 0)) ? 1 : 0;
-}
+///////////////////////////////////////////////////////////
 
-// Функция за ADD и ADC
-static void update_flags_add_adc(uint32_t op1, uint32_t op2, uint32_t result, int operation_type, int update_flags)
+uint32_t READ_MEM_32(uint32_t address, int *result)
 {
-    if (update_flags & UPDATE_C)
+    if (!result)
     {
-        CPU.psr.apsr.C = ((uint64_t)op1 + op2 + (operation_type == OP_ADC ? CPU.psr.apsr.C : 0) > 0xFFFFFFFF) ? 1 : 0;
+        PRINTF("[ERROR] READ_MEM_32: Invalid Parameter\n");
+        exit(0);
     }
-    if (update_flags & UPDATE_V)
+    *result = 0;
+    uint32_t offset;
+    if (address >= ROM_BASE && address < ROM_BASE + CPU.ROM_SIZE)
     {
-        int32_t s_op1 = (int32_t)op1, s_op2 = (int32_t)op2, s_result = (int32_t)result;
-        CPU.psr.apsr.V = compute_overflow_add(s_op1, s_op2, s_result);
-    }
-}
-
-// Функция за SUB, SBC и CMP
-static void update_flags_sub_sbc_cmp(uint32_t op1, uint32_t op2, uint32_t result, int operation_type, int update_flags)
-{
-    if (update_flags & UPDATE_C)
-    {
-        CPU.psr.apsr.C = (op1 >= op2 + (operation_type == OP_SBC ? 1 - CPU.psr.apsr.C : 0)) ? 1 : 0;
-    }
-    if (update_flags & UPDATE_V)
-    {
-        int32_t s_op1 = (int32_t)op1, s_op2 = (int32_t)op2, s_result = (int32_t)result;
-        CPU.psr.apsr.V = ((s_op1 > 0 && s_op2 < 0 && s_result < 0) || (s_op1 < 0 && s_op2 > 0 && s_result > 0)) ? 1 : 0;
-    }
-}
-
-// Функция за RSB
-static void update_flags_rsb(uint32_t op1, uint32_t op2, uint32_t result, int update_flags)
-{
-    if (update_flags & UPDATE_C)
-    {
-        CPU.psr.apsr.C = (op2 >= op1) ? 1 : 0;
-    }
-    if (update_flags & UPDATE_V)
-    {
-        int32_t s_op1 = (int32_t)op1, s_op2 = (int32_t)op2, s_result = (int32_t)result;
-        CPU.psr.apsr.V = ((s_op2 > 0 && s_op1 < 0 && s_result < 0) || (s_op2 < 0 && s_op1 > 0 && s_result > 0)) ? 1 : 0;
-    }
-}
-
-// Функция за CMN
-static void update_flags_cmn(uint32_t op1, uint32_t op2, uint32_t result, int update_flags)
-{
-    if (update_flags & UPDATE_C)
-    {
-        CPU.psr.apsr.C = ((uint64_t)op1 + op2 > 0xFFFFFFFF) ? 1 : 0;
-    }
-    if (update_flags & UPDATE_V)
-    {
-        int32_t s_op1 = (int32_t)op1, s_op2 = (int32_t)op2, s_result = (int32_t)result;
-        CPU.psr.apsr.V = compute_overflow_add(s_op1, s_op2, s_result);
-    }
-}
-
-// Функция за LSL
-static void update_flags_lsl(uint32_t op1, int shift_amount, int update_flags)
-{
-    if (update_flags & UPDATE_C)
-    {
-        if (shift_amount < 0 || shift_amount > 32)
+        // Четене от ROM
+        offset = address - ROM_BASE;
+        if (offset + 3 < CPU.ROM_SIZE)
         {
-            M4_DEBUG("[ERROR] Invalid shift_amount %d in LSL\n", shift_amount);
-            CPU.psr.apsr.C = 0;
-            return;
-        }
-        if (shift_amount > 0)
-        {
-            CPU.psr.apsr.C = (op1 >> (32 - shift_amount)) & 1;
-        }
-        else
-        {
-            CPU.psr.apsr.C = 0; // Няма шифт, C остава непроменен
+            return ((uint32_t)CPU.ROM[offset] |
+                    ((uint32_t)CPU.ROM[offset + 1] << 8) |
+                    ((uint32_t)CPU.ROM[offset + 2] << 16) |
+                    ((uint32_t)CPU.ROM[offset + 3] << 24));
         }
     }
-}
-
-// Функция за LSR, ASR и ROR
-static void update_flags_lsr_asr_ror(uint32_t op1, int shift_amount, int update_flags)
-{
-    if (update_flags & UPDATE_C)
+    else if (address >= RAM_BASE && address < RAM_BASE + CPU.RAM_SIZE)
     {
-        if (shift_amount < 0 || shift_amount > 32)
+        // Четене от RAM
+        offset = address - RAM_BASE;
+        if (offset + 3 < CPU.RAM_SIZE)
         {
-            M4_DEBUG("[ERROR] Invalid shift_amount %d in LSR/ASR/ROR\n", shift_amount);
-            CPU.psr.apsr.C = 0;
-            return;
-        }
-        if (shift_amount > 0)
-        {
-            CPU.psr.apsr.C = (op1 >> (shift_amount - 1)) & 1;
-        }
-        else
-        {
-            CPU.psr.apsr.C = 0; // Няма шифт, C остава непроменен
+            return ((uint32_t)CPU.RAM[offset] |
+                    ((uint32_t)CPU.RAM[offset + 1] << 8) |
+                    ((uint32_t)CPU.RAM[offset + 2] << 16) |
+                    ((uint32_t)CPU.RAM[offset + 3] << 24));
         }
     }
+    // Невалиден адрес
+    PRINTF("[ERROR] READ_MEM_32: Invalid Address: 0x%08X\n", address);
+    *result = -1;
+    return 0; // Връща 0 при невалиден достъп
 }
 
-// Функция за TST и TEQ
-static void update_flags_tst_teq(int update_flags)
+uint16_t READ_MEM_16(uint32_t address, int *result)
 {
-    // C и V не се променят
-    (void)update_flags; // Избягва предупреждение за неизползван параметър
-}
-
-#if USE_DSP
-// Функция за Q флага при SSAT и USAT
-static void update_flags_q_ssat_usat(uint32_t result, uint32_t op1, int update_flags)
-{
-    if (update_flags & UPDATE_Q)
+    if (!result)
     {
-        CPU.psr.apsr.Q = (result != op1) ? 1 : CPU.psr.apsr.Q;
+        PRINTF("[ERROR] READ_MEM: Invalid Parameter\n");
+        exit(0);
     }
+    *result = 0;
+    uint32_t offset;
+    if (address >= ROM_BASE && address < ROM_BASE + CPU.ROM_SIZE)
+    {
+        // Четене от ROM
+        offset = address - ROM_BASE;
+        if (offset + 1 < CPU.ROM_SIZE)
+        {
+            return ((uint16_t)CPU.ROM[offset] | ((uint16_t)CPU.ROM[offset + 1] << 8));
+        }
+    }
+    else if (address >= RAM_BASE && address < RAM_BASE + CPU.RAM_SIZE)
+    {
+        // Четене от RAM
+        offset = address - RAM_BASE;
+        if (offset + 1 < CPU.RAM_SIZE)
+        {
+            return ((uint16_t)CPU.RAM[offset] | ((uint16_t)CPU.RAM[offset + 1] << 8));
+        }
+    }
+    // Невалиден адрес или размер
+    PRINTF("[ERROR] READ_MEM_16: Invalid Address: 0x%08X\n", address);
+    *result = -1; // Връща -1 при невалиден достъп
+    return 0;     // без значение
 }
 
-// Функция за GE флага при SADD16 и UADD16
-static void update_flags_ge_sadd16_uadd16(uint32_t result, uint32_t op1, uint32_t op2, int operation_type, int update_flags)
+uint8_t READ_MEM_8(uint32_t address, int *result)
 {
-    if (update_flags & UPDATE_GE)
+    if (!result)
     {
-        int16_t op1_high = (op1 >> 16) & 0xFFFF, op1_low = op1 & 0xFFFF;
-        int16_t op2_high = (op2 >> 16) & 0xFFFF, op2_low = op2 & 0xFFFF;
-        int16_t res_high = (result >> 16) & 0xFFFF, res_low = result & 0xFFFF;
-        CPU.psr.apsr.GE = 0;
-        if (operation_type == OP_SADD16)
+        PRINTF("[ERROR] READ_MEM: Invalid Parameter\n");
+        exit(0);
+    }
+    *result = 0;
+    uint32_t offset;
+    if (address >= ROM_BASE && address < ROM_BASE + CPU.ROM_SIZE)
+    {
+        // Четене от ROM
+        offset = address - ROM_BASE;
+        if (offset < CPU.ROM_SIZE)
+            return CPU.ROM[offset];
+    }
+    else if (address >= RAM_BASE && address < RAM_BASE + CPU.RAM_SIZE)
+    {
+        // Четене от RAM
+        offset = address - RAM_BASE;
+        if (offset < CPU.RAM_SIZE)
+            return CPU.RAM[offset];
+    }
+    // Невалиден адрес или размер
+    PRINTF("[ERROR] READ_MEM_8: Invalid Address: 0x%08X\n", address);
+    *result = -1; // Връща -1 при невалиден достъп
+    return 0;     // без значение
+}
+
+uint32_t READ_THUMB_32(uint32_t address, int *result){
+    if (!result)
+    {
+        PRINTF("[ERROR] READ_MEM_32: Invalid Parameter\n");
+        exit(0);
+    }
+    *result = 0;
+    uint32_t offset;
+    if (address >= ROM_BASE && address < ROM_BASE + CPU.ROM_SIZE)
+    {
+        // Четене от ROM
+        offset = address - ROM_BASE;
+        if (offset + 3 < CPU.ROM_SIZE)
         {
-            CPU.psr.apsr.GE |= (res_high >= 0) ? (1 << 3) : 0;
-            CPU.psr.apsr.GE |= (res_low >= 0) ? (1 << 2) : 0;
-        }
-        else
-        {
-            CPU.psr.apsr.GE |= (res_high >= op1_high + op2_high) ? (1 << 3) : 0;
-            CPU.psr.apsr.GE |= (res_low >= op1_low + op2_low) ? (1 << 2) : 0;
+            return CPU.ROM[offset+2] | (CPU.ROM[offset+3] << 8) | (CPU.ROM[offset+0] << 16) | (CPU.ROM[offset+1] << 24);
         }
     }
 }
-#endif
 
-// Основна функция за актуализация на APSR
-void m4_update_apsr(uint32_t result, uint32_t op1, uint32_t op2, int operation_type, int shift_amount, int update_flags)
+///////////////////////////////////////////////////////////
+
+int WRITE_MEM_32(uint32_t address, uint32_t data)
 {
-    // Актуализация на N (Negative)
-    if (update_flags & UPDATE_N)
+    // Проверка дали адресът е в обхвата на RAM
+    if (address >= RAM_BASE && address < RAM_BASE + CPU.RAM_SIZE)
     {
-        CPU.psr.apsr.N = (result >> 31) & 1;
-    }
-
-    // Актуализация на Z (Zero)
-    if (update_flags & UPDATE_Z)
-    {
-        CPU.psr.apsr.Z = (result == 0) ? 1 : 0;
-    }
-
-    // Актуализация на всички флагове (C, V, Q, GE)
-    if (update_flags & (UPDATE_C | UPDATE_V | UPDATE_Q | UPDATE_GE))
-    {
-        switch (operation_type)
+        uint32_t offset = address - RAM_BASE;
+        // Проверка дали има достатъчно място за 4 байта
+        if (offset + 3 < CPU.RAM_SIZE)
         {
-        case OP_ADD:
-        case OP_ADC:
-            update_flags_add_adc(op1, op2, result, operation_type, update_flags);
+            CPU.RAM[offset] = (uint8_t)(data & 0xFF);
+            CPU.RAM[offset + 1] = (uint8_t)((data >> 8) & 0xFF);
+            CPU.RAM[offset + 2] = (uint8_t)((data >> 16) & 0xFF);
+            CPU.RAM[offset + 3] = (uint8_t)((data >> 24) & 0xFF);
+            return 0; // Успешен запис
+        }
+    }
+    PRINTF("[ERROR] WRITE_MEM_32: Invalid Address: 0x%08X, Data: 0x%08X\n", address, data);
+    return -1; // Невалиден адрес или недостатъчно място
+}
+
+int WRITE_MEM_16(uint32_t address, uint16_t data)
+{
+    // Проверка дали адресът е в обхвата на RAM
+    if (address >= RAM_BASE && address < RAM_BASE + CPU.RAM_SIZE)
+    {
+        uint32_t offset = address - RAM_BASE;
+        // Проверка дали има достатъчно място за 4 байта
+        if (offset + 1 < CPU.RAM_SIZE)
+        {
+            CPU.RAM[offset] = (uint8_t)(data & 0xFF);
+            CPU.RAM[offset + 1] = (uint8_t)(data >> 8);
+            return 0; // Успешен запис
+        }
+    }
+    PRINTF("[ERROR] WRITE_MEM_16: Invalid Address: 0x%08X, Data: 0x%08X\n", address, data);
+    return -1; // Невалиден адрес или недостатъчно място
+}
+
+int WRITE_MEM_8(uint32_t address, uint8_t data)
+{
+    // Проверка дали адресът е в обхвата на RAM
+    if (address >= RAM_BASE && address < RAM_BASE + CPU.RAM_SIZE)
+    {
+        uint32_t offset = address - RAM_BASE;
+        // Проверка дали има достатъчно място за 4 байта
+        if (offset < CPU.RAM_SIZE)
+        {
+            CPU.RAM[offset] = data;
+            return 0; // Успешен запис
+        }
+    }
+    PRINTF("[ERROR] WRITE_MEM_8: Invalid Address: 0x%08X, Data: 0x%08X\n", address, data);
+    return -1; // Невалиден адрес или недостатъчно място
+}
+
+///////////////////////////////////////////////////////////
+
+void PRINT_REG(void)
+{
+    printf("=== CPU Registers ===\n");
+    for (int i = 0; i < 16; i++)
+    {
+        const char *reg_name;
+        switch (i)
+        {
+        case 13:
+            reg_name = "SP ";
             break;
-        case OP_SUB:
-        case OP_SBC:
-        case OP_CMP:
-            update_flags_sub_sbc_cmp(op1, op2, result, operation_type, update_flags);
+        case 14:
+            reg_name = "LR ";
             break;
-        case OP_RSB:
-            update_flags_rsb(op1, op2, result, update_flags);
+        case 15:
+            reg_name = "PC ";
             break;
-        case OP_CMN:
-            update_flags_cmn(op1, op2, result, update_flags);
-            break;
-        case OP_LSL:
-            update_flags_lsl(op1, shift_amount, update_flags);
-            break;
-        case OP_LSR:
-        case OP_ASR:
-        case OP_ROR:
-            update_flags_lsr_asr_ror(op1, shift_amount, update_flags);
-            break;
-        case OP_TST:
-        case OP_TEQ:
-            update_flags_tst_teq(update_flags);
-            break;
-#if USE_DSP
-        case OP_SSAT:
-        case OP_USAT:
-            update_flags_q_ssat_usat(result, op1, update_flags);
-            break;
-        case OP_SADD16:
-        case OP_UADD16:
-            update_flags_ge_sadd16_uadd16(result, op1, op2, operation_type, update_flags);
-            break;
-#endif
         default:
-            M4_DEBUG("[WARNING] Unsupported operation_type %d in m4_update_apsr\n", operation_type);
+        {
+            static char buf[8];
+            snprintf(buf, sizeof(buf), "R%02d", i);
+            reg_name = buf;
             break;
         }
+        }
+        printf("%s = 0x%08X\n", reg_name, CPU.REG.r[i]);
     }
+    printf("===================\n");
 }
+
+///////////////////////////////////////////////////////////
 
 int m4_execute(void)
 {
+    FUNC_VM();
+
     if (CPU.REG.PC & 0x1)
     {
-        M4_DEBUG("[ERROR] Unaligned PC: 0x%08X\n", CPU.REG.PC);
-        CPU.error = -1;
-        return -1;
+        DEBUG_M4("[ERROR] Unaligned PC: 0x%08X\n", CPU.REG.PC);
+        RETURN_ERROR(-1);
     }
 
     if (!CPU.psr.epsr.T)
     {
-        M4_DEBUG("[ERROR] Invalid Thumb state at PC: 0x%08X\n", CPU.REG.PC);
-        CPU.error = -1;
-        return -1;
+        DEBUG_M4("[ERROR] Invalid Thumb state at PC: 0x%08X\n", CPU.REG.PC);
+        RETURN_ERROR(-1);
     }
 
-    if (CPU.REG.PC >= CPU.ROM_SIZE + ROM_BASE)
+    int res;
+    CPU.op = READ_MEM_16(CPU.REG.PC, &res);
+    if (res) // Проверка за граници, има съобщение за грешка
     {
-        M4_DEBUG("[ERROR] Invalid PC access: 0x%08X\n", CPU.REG.PC);
-        CPU.error = -1;
-        return -1;
+        RETURN_ERROR(-1);
     }
-
-    CPU.op = READ_ROM_16(CPU.REG.PC);
 
     if ((CPU.op & 0xF800) >= 0xE800)
     {
         if (CPU.REG.PC & 0x3)
         {
-            M4_DEBUG("[ERROR] Unaligned PC for 32-bit instruction: 0x%08X\n", CPU.REG.PC);
-            CPU.error = -1;
-            return -1;
+            DEBUG_M4("[ERROR] Unaligned PC for 32-bit instruction: 0x%08X\n", CPU.REG.PC);
+            RETURN_ERROR(-1);
         }
         if (CPU.REG.PC + 3 >= CPU.ROM_SIZE + ROM_BASE)
         {
-            M4_DEBUG("[ERROR] Invalid PC access: 0x%08X\n", CPU.REG.PC);
-            CPU.error = -1;
-            return -1;
+            DEBUG_M4("[ERROR] Invalid PC access: 0x%08X\n", CPU.REG.PC);
+            RETURN_ERROR(-1);
         }
-        CPU.op = (CPU.op << 16) | READ_ROM_16(CPU.REG.PC + 2);
+
+        CPU.op = READ_THUMB_32(CPU.REG.PC, &res);
+        if (res) // Проверка за граници, има съобщение за грешка
+        {
+            RETURN_ERROR(-1);
+        }
+
         return m4_execute_32();
     }
     else
@@ -260,3 +265,5 @@ int m4_execute(void)
         return m4_execute_16();
     }
 }
+
+///////////////////////////////////////////////////////////
